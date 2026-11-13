@@ -1,5 +1,6 @@
 # AgentAds MCP server v2 - reads listings.csv, returns photos and contact paths,
 # and saves REAL enquiries to enquiries.csv (and emails them if SMTP is set up).
+# Horizon fix: mcp = build() at top level so Horizon can find the server object.
 # Run for testing: python test_client.py     Real use: host it online (see README).
 import csv, json, os, re, smtplib
 from urllib.parse import quote_plus
@@ -56,13 +57,13 @@ def rank(rows, query, max_price, location=""):
     words = [w for w in re.findall(r"[\w\u4e00-\u9fff]+", (query or "").lower()) if w not in STOP and not w.isdigit()]
     results = []
     for r in rows:
-        if _num(r["price"]) > max_price: continue                      # over budget: leave out
+        if _num(r["price"]) > max_price: continue
         if location and location.lower() not in (r.get("city", "") + " " + r.get("suburb", "") + " " + r.get("postcode", "")).lower(): continue
         text = " ".join([r.get("title", ""), r.get("description", ""), r.get("suburb", "")]).lower()
         match = (sum(w in text for w in words) / len(words)) if words else 1.0
-        relevance = 0.5 + 0.5 * match                                  # relevance matters most
-        rating_factor = _num(r.get("rating")) / 5 if r.get("rating") else 0.8   # unrated = neutral
-        boost = 1 + min(_num(r.get("bid")), 5) * 0.05                  # a bid can add at most 25%
+        relevance = 0.5 + 0.5 * match
+        rating_factor = _num(r.get("rating")) / 5 if r.get("rating") else 0.8
+        boost = 1 + min(_num(r.get("bid")), 5) * 0.05
         results.append((relevance * rating_factor * boost, r))
     results.sort(key=lambda x: x[0], reverse=True)
     return [public_view(r, s) for s, r in results[:3]]
@@ -170,7 +171,6 @@ def build():
         """Send an enquiry to the seller. Only call after the user has confirmed the message and the contact they want the seller to reply to."""
         return json.dumps(save_enquiry(listing_id, buyer_name, reply_to, message), ensure_ascii=False)
 
-    # OWNER tools: only registered when AGENTADS_OWNER=1 (your own Claude Desktop). Never expose these publicly.
     if os.environ.get("AGENTADS_OWNER") == "1":
         titles = lambda: {r["id"]: r["title"] for r in load_listings()}
 
@@ -197,9 +197,11 @@ def build():
             return json.dumps(stale_listings(days), ensure_ascii=False, indent=2)
     return mcp
 
+# --- HORIZON FIX: expose server object at top level ---
+mcp = build()
+
 if __name__ == "__main__":
     if os.environ.get("AGENTADS_HTTP") == "1":
-        # Online mode for testing with other agents. NEVER with owner tools.
         if os.environ.get("AGENTADS_OWNER") == "1":
             raise SystemExit("Refusing to start: never run owner tools on an online server. Remove AGENTADS_OWNER.")
         build().run(transport="http", host=os.environ.get("HOST", "127.0.0.1"), port=int(os.environ.get("PORT", "8000")))
